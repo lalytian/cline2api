@@ -1,0 +1,5 @@
+accounts.json
+config.json
+*.tmp
+*.bak.*
+__pycache__/
