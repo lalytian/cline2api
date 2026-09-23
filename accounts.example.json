@@ -1,0 +1,14 @@
+[
+  {
+    "id": "acc_sample_01",
+    "email": "user@example.com",
+    "refreshToken": "your_refresh_token_here",
+    "accessToken": null,
+    "expiry": 0,
+    "enabled": true,
+    "consecutive_fails": 0,
+    "cooldownUntil": 0,
+    "last_used": 0,
+    "last_error": null
+  }
+]

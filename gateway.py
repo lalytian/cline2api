@@ -24,7 +24,7 @@ from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-DATA_DIR = "/opt/cline2api"
+DATA_DIR = os.environ.get("CLINE2API_DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
 ACCOUNTS_FILE = os.path.join(DATA_DIR, "accounts.json")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
@@ -58,7 +58,7 @@ def load_config() -> Dict[str, Any]:
                 return json.load(f)
         except Exception:
             pass
-    return {"api_key": "sk-cline2api-secret", "admin_password": "tianli_admin"}
+    return {"api_key": os.environ.get("API_KEY", "sk-cline-default-key"), "admin_password": os.environ.get("ADMIN_PASSWORD", "admin123")}
 
 def save_config(cfg: Dict[str, Any]):
     tmp = CONFIG_FILE + ".tmp"
@@ -1044,7 +1044,11 @@ async def admin_delete(req: Request):
 
 if __name__ == "__main__":
     if not os.path.exists(CONFIG_FILE):
-        save_config({"api_key": f"sk-cline-{uuid.uuid4().hex}", "admin_password": "tianli_admin"})
+        default_pwd = os.environ.get("ADMIN_PASSWORD", "admin123")
+        default_key = os.environ.get("API_KEY", f"sk-cline-{uuid.uuid4().hex[:16]}")
+        save_config({"api_key": default_key, "admin_password": default_pwd})
     if not os.path.exists(ACCOUNTS_FILE):
         save_accounts([])
-    uvicorn.run(app, host="127.0.0.1", port=18091, log_level="info")
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "18091"))
+    uvicorn.run(app, host=host, port=port, log_level="info")
