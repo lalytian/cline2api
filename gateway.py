@@ -3,7 +3,7 @@
 cline2api - 本地轻量 Cline 管理网关 (coibox OCI ARM 宿主机版)
 1. 原生 Web 管理面板 (/admin)，支持：开关、删除、重登录、设备码一键发起 OAuth、手动粘贴导入 RefreshToken
 2. 免费模型实时监控面板 (/admin/models) 与探活测试（与 Cline 客户端官方目录完全对齐）
-3. 逆向 Cline 官方客户端协议，提供 OpenAI 兼容端点 (/v1/models, /v1/chat/completions)
+3. 将 Cline 官方客户端协议本地拼接，提供 OpenAI 兼容端点 (/v1/models, /v1/chat/completions)
 4. 自动剥离 max_tokens，非流式请求自动强制转 SSE 拼装防 500
 5. 账号池轮询 (Round-Robin) 与 429 自动读取冷却时间退避切号
 """

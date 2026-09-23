@@ -2,7 +2,7 @@
 
 轻量级 Cline API 转 OpenAI 兼容接口网关与多账号调度管理面板。
 
-将 Cline 官方客户端协议逆向并封装为标准 OpenAI 格式接口（`/v1/chat/completions`, `/v1/models`），支持多账号池轮询调度、Token 自动刷新续期、429 智能冷却退避以及内置 Web 管理面板。
+将 Cline 官方客户端协议本地拼接，封装为标准 OpenAI 格式接口（`/v1/chat/completions`, `/v1/models`），支持多账号池轮询调度、Token 自动刷新续期、429 智能冷却退避以及内置 Web 管理面板。
 
 ---
 
