@@ -159,15 +159,15 @@ def build_cline_headers(access_token: str, session_id: str) -> Dict[str, str]:
     return {
         "Authorization": f"Bearer workos:{access_token}",
         "Content-Type": "application/json",
-        "User-Agent": "Cline/3.0.47",
+        "User-Agent": "Cline/3.0.65",
         "HTTP-Referer": "https://cline.bot",
         "X-Title": "Cline",
         "X-IS-MULTIROOT": "false",
-        "X-CLIENT-TYPE": "cline-sdk",
-        "X-CLIENT-VERSION": "3.0.47",
+        "X-CLIENT-TYPE": "cline-cli",
+        "X-CLIENT-VERSION": "3.0.65",
         "X-PLATFORM": "terminal",
-        "X-PLATFORM-VERSION": "3.0.47",
-        "X-CORE-VERSION": "0.0.66",
+        "X-PLATFORM-VERSION": "3.0.65",
+        "X-CORE-VERSION": "0.0.86",
         "X-Task-ID": session_id,
     }
 
@@ -183,9 +183,17 @@ OFFICIAL_FREE_MODELS = [
         "type": "官方免配额通道"
     },
     {
-        "id": "cline-free/kimi-k3",
-        "name": "Kimi K3 (free)",
-        "description": "Leading open-weights model",
+        "id": "cline-free/gemini-3.8-flash",
+        "name": "Gemini 3.8 Flash (free)",
+        "description": "Google most intelligent Flash model",
+        "badge": "FREE",
+        "source": "official_free",
+        "type": "官方免配额通道"
+    },
+    {
+        "id": "cline-free/mimo-v2.6-flash",
+        "name": "MiMo-V2.6-Flash (free)",
+        "description": "Mixture-of-Experts architecture with 309B total parameters",
         "badge": "FREE",
         "source": "official_free",
         "type": "官方免配额通道"
@@ -193,34 +201,10 @@ OFFICIAL_FREE_MODELS = [
     {
         "id": "cline-free/muse-spark-1.3-contributor",
         "name": "Muse Spark 1.3 Contributor (free)",
-        "description": "Meta’s multimodal reasoning model for experimentation, learning, and early-stage agentic, multi-agent, and coding workflows.",
+        "description": "Meta multimodal reasoning model for experimentation, learning, and early-stage agentic, multi-agent, and coding workflows.",
         "badge": "FREE",
         "source": "official_free",
         "type": "官方免配额通道"
-    },
-    {
-        "id": "z-ai/glm-5.3-flash",
-        "name": "GLM 5.3 Flash (free)",
-        "description": "Latest natively multimodal model in the GLM-5 series.",
-        "badge": "FREE",
-        "source": "official_free",
-        "type": "官方免配额通道"
-    },
-    {
-        "id": "cline-free/solar-pro4",
-        "name": "Solar Pro 4 (free)",
-        "description": "Strong model for office productivity, document-intensive work, and coding.",
-        "badge": "FREE",
-        "source": "official_free",
-        "type": "官方免配额通道"
-    },
-    {
-        "id": "openrouter/free",
-        "name": "Free Models Router",
-        "description": "OpenRouter 动态免费路由通道",
-        "badge": "ROUTER",
-        "source": "official_free",
-        "type": "动态路由通道"
     }
 ]
 
