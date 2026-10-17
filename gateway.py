@@ -208,6 +208,40 @@ OFFICIAL_FREE_MODELS = [
     }
 ]
 
+# 官方免费通道模型名映射（下发别名 -> 上游真实模型名）
+FREE_MODEL_UPSTREAM_MAP = {
+    "cline-free/deepseek-v4.1-flash": "deepseek/deepseek-v4.1-flash",
+    "cline-free/gemini-3.8-flash": "google/gemini-3.8-flash",
+    "cline-free/mimo-v2.6-flash": "xiaomi/mimo-v2.6-flash",
+    "cline-free/muse-spark-1.3-contributor": "meta/muse-spark-1.3-contributor",
+}
+
+def resolve_upstream_model(model_name: str) -> str:
+    if not model_name:
+        return model_name
+    m = model_name.strip()
+    # 命中显式映射
+    if m in FREE_MODEL_UPSTREAM_MAP:
+        return FREE_MODEL_UPSTREAM_MAP[m]
+    # 处理 cline/ 前缀 (CPA 侧下发)
+    if m.startswith("cline/"):
+        bare = m[6:]
+        cf = f"cline-free/{bare}"
+        if cf in FREE_MODEL_UPSTREAM_MAP:
+            return FREE_MODEL_UPSTREAM_MAP[cf]
+        # 常见官方前缀补全
+        if "/" not in bare:
+            if "deepseek" in bare:
+                return f"deepseek/{bare}"
+            if "gemini" in bare:
+                return f"google/{bare}"
+            if "mimo" in bare:
+                return f"xiaomi/{bare}"
+            if "muse" in bare:
+                return f"meta/{bare}"
+    return m
+
+
 # ----------------- 网关数据面路由 -----------------
 
 @app.get("/healthz")
@@ -263,6 +297,9 @@ async def chat_completions(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     body.pop("max_tokens", None)
+    orig_model = body.get("model", "")
+    target_model = resolve_upstream_model(orig_model)
+    body["model"] = target_model
     is_client_stream = body.get("stream", False)
     session_id = f"task_{uuid.uuid4().hex[:12]}"
 
@@ -297,8 +334,8 @@ async def chat_completions(request: Request):
                     await r.aclose()
                     await client.aclose()
                     err_text = err_bytes.decode(errors="ignore")
-                    if r.status_code == 429 or "Daily free limit reached" in err_text:
-                        cd_ms = parse_cooldown_ms(err_text, r.status_code)
+                    if r.status_code == 429 or "Daily free limit reached" in err_text or "insufficient_credits" in err_text or r.status_code == 402:
+                        cd_ms = parse_cooldown_ms(err_text, r.status_code) if (r.status_code == 429 or "Daily" in err_text) else 86400000
                         acc["cooldownUntil"] = int(time.time()) + int(cd_ms / 1000)
                         accs = load_accounts()
                         for i, a in enumerate(accs):
@@ -318,8 +355,8 @@ async def chat_completions(request: Request):
                 r = await client.post(upstream_url, json=stream_body, headers=headers)
                 if r.status_code != 200:
                     err_text = r.text
-                    if r.status_code == 429 or "Daily free limit reached" in err_text:
-                        cd_ms = parse_cooldown_ms(err_text, r.status_code)
+                    if r.status_code == 429 or "Daily free limit reached" in err_text or "insufficient_credits" in err_text or r.status_code == 402:
+                        cd_ms = parse_cooldown_ms(err_text, r.status_code) if (r.status_code == 429 or "Daily" in err_text) else 86400000
                         acc["cooldownUntil"] = int(time.time()) + int(cd_ms / 1000)
                         accs = load_accounts()
                         for i, a in enumerate(accs):
