@@ -36,6 +36,66 @@ WORKOS_CLIENT_ID = "client_01K3A541FN8TA3EPPHTD2325AR"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("cline2api")
 
+
+import hashlib
+
+def shorten_tool_name(orig: str) -> str:
+    """把超长工具名确定性截短到 <=64 字符：前 55 字符 + "_" + 8 位哈希 (对齐 luawei1 shortenToolName)"""
+    sum_hex = hashlib.sha256(orig.encode("utf-8")).hexdigest()[:8]
+    return f"{orig[:55]}_{sum_hex}"
+
+def clamp_params_tool_names(body: dict) -> dict:
+    """把请求里超过 64 字符的工具名截短，同时建立 短->原 映射字典"""
+    short_to_orig = {}
+    
+    def ensure(name: str) -> str:
+        if len(name) <= 64:
+            return name
+        short = shorten_tool_name(name)
+        short_to_orig[short] = name
+        return short
+
+    if "tools" in body and isinstance(body["tools"], list):
+        for t in body["tools"]:
+            if isinstance(t, dict):
+                fn = t.get("function")
+                if isinstance(fn, dict) and "name" in fn:
+                    fn["name"] = ensure(fn["name"])
+                elif "name" in t:
+                    t["name"] = ensure(t["name"])
+
+    if "messages" in body and isinstance(body["messages"], list):
+        for msg in body["messages"]:
+            if isinstance(msg, dict) and "tool_calls" in msg and isinstance(msg["tool_calls"], list):
+                for tc in msg["tool_calls"]:
+                    if isinstance(tc, dict):
+                        fn = tc.get("function")
+                        if isinstance(fn, dict) and "name" in fn:
+                            fn["name"] = ensure(fn["name"])
+
+    if "tool_choice" in body and isinstance(body["tool_choice"], dict):
+        fn = body["tool_choice"].get("function")
+        if isinstance(fn, dict) and "name" in fn:
+            fn["name"] = ensure(fn["name"])
+
+    return short_to_orig
+
+def restore_tool_calls_in_response(resp_dict: dict, short_to_orig: dict):
+    """回程还原：把上游返回里的截短工具名还原给客户端，避免客户端报 Unknown Tool (对齐 luawei1 restoreToolCallsInResponse)"""
+    if not resp_dict or not short_to_orig:
+        return
+    for choice in resp_dict.get("choices", []):
+        for key in ["message", "delta"]:
+            d = choice.get(key)
+            if isinstance(d, dict) and "tool_calls" in d:
+                for tc in d.get("tool_calls", []):
+                    fn = tc.get("function")
+                    if isinstance(fn, dict):
+                        fname = fn.get("name")
+                        if fname in short_to_orig:
+                            fn["name"] = short_to_orig[fname]
+
+
 app = FastAPI(title="Cline2API Gateway", docs_url=None, redoc_url=None)
 app.add_middleware(
     CORSMiddleware,
@@ -381,25 +441,16 @@ async def chat_completions(request: Request):
     body.pop("max_tokens", None)
     body.pop("max_completion_tokens", None)
 
-    # 核心安全补丁 2: 清洗与还原超长/畸形 Tools (对齐 luawei1 针对 Codex 桌面端 Meta 400 修复)
+    # 核心安全补丁 2: 工具参数校验 + 双向确定性截短与还原
     if "tools" in body and isinstance(body["tools"], list):
-        cleaned_tools = []
         for t in body["tools"]:
             if isinstance(t, dict) and t.get("type") == "function":
                 fn = t.get("function", {})
                 if isinstance(fn, dict):
-                    # 修复空参数或类型错误
                     params = fn.get("parameters")
                     if not params or not isinstance(params, dict) or params.get("type") is None:
                         fn["parameters"] = {"type": "object", "properties": {}}
-                    # 截短超长函数名 (防上游 400)
-                    fname = fn.get("name", "")
-                    if len(fname) > 64:
-                        fn["name"] = fname[:64]
-                cleaned_tools.append(t)
-            else:
-                cleaned_tools.append(t)
-        body["tools"] = cleaned_tools
+    short_to_orig = clamp_params_tool_names(body)
 
     orig_model = body.get("model", "")
     target_model = resolve_upstream_model(orig_model)
@@ -503,7 +554,7 @@ async def chat_completions(request: Request):
                     continue
 
                 await client.aclose()
-                return JSONResponse({
+                resp_payload = {
                     "id": f"chatcmpl-{uuid.uuid4().hex}",
                     "object": "chat.completion",
                     "created": int(time.time()),
@@ -514,7 +565,9 @@ async def chat_completions(request: Request):
                         "finish_reason": "stop"
                     }],
                     "usage": {"prompt_tokens": 10, "completion_tokens": len(full_content), "total_tokens": 10 + len(full_content)}
-                })
+                }
+                restore_tool_calls_in_response(resp_payload, short_to_orig)
+                return JSONResponse(resp_payload)
             except Exception:
                 await client.aclose()
                 continue
