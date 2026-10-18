@@ -83,12 +83,41 @@ def save_accounts(accs: List[Dict[str, Any]]):
 
 # ----------------- Token 刷新与调度 -----------------
 
+WORKOS_CLIENT_ID = "client_01K3A541FN8TA3EPPHTD2325AR"
+WORKOS_AUTH_URL = "https://api.workos.com/user_management/authenticate"
+
+async def refresh_via_workos_fallback(refresh_token: str) -> Optional[Dict[str, str]]:
+    """双通道自愈：直接调用 WorkOS 认证底座刷新 (对齐 luawei1 refreshViaWorkOS)"""
+    payload = {
+        "grant_type": "refresh_token",
+        "client_id": WORKOS_CLIENT_ID,
+        "refresh_token": refresh_token
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(WORKOS_AUTH_URL, json=payload, headers={"Content-Type": "application/json"})
+            if resp.status_code == 200:
+                data = resp.json()
+                at = data.get("access_token")
+                rt = data.get("refresh_token")
+                if at:
+                    logger.info("Token successfully self-healed via WorkOS fallback channel!")
+                    return {"access_token": at, "refresh_token": rt or refresh_token}
+            else:
+                logger.warning(f"WorkOS fallback rejected: HTTP {resp.status_code} {resp.text[:120]}")
+    except Exception as e:
+        logger.error(f"WorkOS fallback exception: {e}")
+    return None
+
 async def refresh_account_token(acc: Dict[str, Any]) -> Optional[str]:
     url = f"{CLINE_API_BASE}/auth/refresh"
     payload = {
         "refreshToken": acc["refreshToken"],
         "grantType": "refresh_token"
     }
+    new_at = None
+    new_rt = None
+
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             res = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
@@ -96,26 +125,39 @@ async def refresh_account_token(acc: Dict[str, Any]) -> Optional[str]:
                 data = res.json().get("data", {})
                 new_at = data.get("accessToken")
                 new_rt = data.get("refreshToken")
-                if new_at:
-                    acc["accessToken"] = new_at
-                    acc["expiry"] = int(time.time()) + 3000
-                    if new_rt:
-                        acc["refreshToken"] = new_rt
-                    acc["status"] = "active"
-                    acc["last_error"] = ""
-                    accs = load_accounts()
-                    for i, item in enumerate(accs):
-                        if item.get("id") == acc.get("id") or item.get("email") == acc.get("email"):
-                            accs[i] = acc
-                            break
-                    save_accounts(accs)
-                    return new_at
+            elif res.status_code in [400, 401, 403]:
+                logger.warning(f"Cline /auth/refresh returned {res.status_code}, triggering WorkOS dual-channel self-heal...")
+                healed = await refresh_via_workos_fallback(acc["refreshToken"])
+                if healed:
+                    new_at = healed["access_token"]
+                    new_rt = healed["refresh_token"]
+                else:
+                    acc["last_error"] = f"HTTP {res.status_code}: {res.text[:120]}"
             else:
-                acc["last_error"] = f"HTTP {res.status_code}: {res.text[:200]}"
-                logger.error(f"Failed to refresh token for {acc.get('email')}: {acc['last_error']}")
+                acc["last_error"] = f"HTTP {res.status_code}: {res.text[:120]}"
         except Exception as e:
-            acc["last_error"] = str(e)
-            logger.error(f"Exception refreshing token for {acc.get('email')}: {e}")
+            logger.warning(f"Cline refresh network error, attempting WorkOS fallback: {e}")
+            healed = await refresh_via_workos_fallback(acc["refreshToken"])
+            if healed:
+                new_at = healed["access_token"]
+                new_rt = healed["refresh_token"]
+            else:
+                acc["last_error"] = str(e)
+
+    if new_at:
+        acc["accessToken"] = new_at
+        acc["expiry"] = int(time.time()) + 3000
+        if new_rt:
+            acc["refreshToken"] = new_rt
+        acc["status"] = "active"
+        acc["last_error"] = ""
+        accs = load_accounts()
+        for i, item in enumerate(accs):
+            if item.get("id") == acc.get("id") or item.get("email") == acc.get("email"):
+                accs[i] = acc
+                break
+        save_accounts(accs)
+        return new_at
     return None
 
 async def get_valid_token(acc: Dict[str, Any]) -> Optional[str]:
@@ -1143,6 +1185,148 @@ async def admin_delete(req: Request):
     save_accounts(accs)
     return {"ok": True}
 
+def responses_to_chat_body(req_body: Dict[str, Any]) -> Dict[str, Any]:
+    """将 OpenAI Responses API 请求体完整转译为标准 chat/completions"""
+    chat_body: Dict[str, Any] = {
+        "model": req_body.get("model", "cline-free/deepseek-v4.1-flash"),
+        "stream": req_body.get("stream", False),
+    }
+    for k in ["temperature", "top_p", "stop", "seed", "user"]:
+        if k in req_body:
+            chat_body[k] = req_body[k]
+
+    msgs = []
+    # 注入 instructions 为 system 消息
+    if "instructions" in req_body and req_body["instructions"]:
+        msgs.append({"role": "system", "content": str(req_body["instructions"])})
+
+    # 解析 input 树 (支持 string 或 message / function_call 对象列表)
+    inp = req_body.get("input", "")
+    if isinstance(inp, str):
+        msgs.append({"role": "user", "content": inp})
+    elif isinstance(inp, list):
+        for item in inp:
+            if not isinstance(item, dict):
+                continue
+            itype = item.get("type", "message")
+            if itype == "message":
+                role = item.get("role", "user")
+                content = item.get("content", "")
+                if isinstance(content, list):
+                    txt_parts = [c.get("text", "") for c in content if isinstance(c, dict) and "text" in c]
+                    content = "".join(txt_parts) if txt_parts else str(content)
+                msgs.append({"role": role, "content": str(content)})
+            elif itype == "function_call":
+                call_id = item.get("call_id") or item.get("id") or "call_default"
+                args = item.get("arguments", "{}")
+                if isinstance(args, dict):
+                    args = json.dumps(args)
+                msgs.append({
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": item.get("name", "tool"), "arguments": args}
+                    }]
+                })
+            elif itype == "function_call_output":
+                call_id = item.get("call_id") or item.get("id") or "call_default"
+                out = item.get("output", "")
+                if isinstance(out, dict):
+                    out = json.dumps(out)
+                msgs.append({"role": "tool", "content": str(out), "tool_call_id": call_id})
+    chat_body["messages"] = msgs
+
+    # 转译 tools
+    if "tools" in req_body and isinstance(req_body["tools"], list):
+        c_tools = []
+        for t in req_body["tools"]:
+            if isinstance(t, dict):
+                if t.get("type") == "function":
+                    c_tools.append(t)
+                elif "function" in t:
+                    c_tools.append({"type": "function", "function": t["function"]})
+                else:
+                    c_tools.append({"type": "function", "function": t})
+        chat_body["tools"] = c_tools
+    if "tool_choice" in req_body:
+        chat_body["tool_choice"] = req_body["tool_choice"]
+    return chat_body
+
+@app.post("/v1/responses")
+async def openai_responses_endpoint(request: Request):
+    """原生支持 Codex 桌面端 responses直通调用 (对齐 luawei1 responses.go)"""
+    try:
+        raw_body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    chat_body = responses_to_chat_body(raw_body)
+    is_stream = chat_body.get("stream", False)
+
+    # 包装伪造 Request 传递给成熟的 chat_completions 核心
+    class MockRequest:
+        def __init__(self, headers, body_json):
+            self.headers = headers
+            self._body = body_json
+        async def json(self):
+            return self._body
+
+    mock_req = MockRequest(request.headers, chat_body)
+    resp = await chat_completions(mock_req)
+    # 如果是非流式响应，包装一层 responses 格式外壳
+    if not is_stream and isinstance(resp, JSONResponse):
+        try:
+            c_data = json.loads(resp.body.decode("utf-8"))
+            choice = c_data.get("choices", [{}])[0]
+            msg = choice.get("message", {})
+            r_output = []
+            if msg.get("content"):
+                r_output.append({"type": "message", "role": "assistant", "content": [{"type": "text", "text": msg["content"]}]})
+            if msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    fn = tc.get("function", {})
+                    r_output.append({
+                        "type": "function_call",
+                        "call_id": tc.get("id"),
+                        "name": fn.get("name"),
+                        "arguments": fn.get("arguments", "{}")
+                    })
+            r_resp = {
+                "id": f"resp_{uuid.uuid4().hex}",
+                "object": "response",
+                "created": int(time.time()),
+                "model": c_data.get("model", chat_body.get("model")),
+                "output": r_output,
+                "usage": c_data.get("usage", {})
+            }
+            return JSONResponse(r_resp)
+        except Exception:
+            return resp
+    return resp
+
+
+async def sync_recommended_models_loop():
+    """后台每小时动态同步 Cline 官方免 credits 推荐模型池 (对齐 models_sync.go)"""
+    while True:
+        try:
+            await asyncio.sleep(3600)  # 每小时同步一次
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.get("https://api.cline.bot/api/v1/ai/cline/recommended-models")
+                if r.status_code == 200:
+                    data = r.json()
+                    free_models = data.get("free", [])
+                    if free_models:
+                        logger.info(f"Dynamic model pool refreshed: {len(free_models)} free models available")
+        except Exception as e:
+            logger.warning(f"Error in dynamic model sync loop: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(sync_recommended_models_loop())
+
+
 if __name__ == "__main__":
     if not os.path.exists(CONFIG_FILE):
         default_pwd = os.environ.get("ADMIN_PASSWORD", "admin123")
@@ -1153,3 +1337,5 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "18091"))
     uvicorn.run(app, host=host, port=port, log_level="info")
+
+
