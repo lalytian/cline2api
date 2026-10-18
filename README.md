@@ -167,3 +167,9 @@ curl http://127.0.0.1:18091/v1/chat/completions \
 ## 📄 License
 
 MIT License
+
+---
+
+## ⚠️ 免责声明 (Disclaimer)
+
+本项目仅供计算机网络协议研究与学术技术验证使用，严禁用于任何商业用途或恶意刷取第三方资源行为。使用本项目所产生的一切后果由使用者自行承担，与本项目开发者无关。详见完整 [DISCLAIMER.md](DISCLAIMER.md)。
