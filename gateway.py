@@ -420,7 +420,8 @@ async def chat_completions(request: Request):
         upstream_url = f"{CLINE_API_BASE}/chat/completions"
 
         if is_client_stream:
-            client = httpx.AsyncClient(timeout=120.0)
+            # 核心强化: 首字 20s 断流看门狗 (超时即判定上游假死，快速换号重试)
+            client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0, read=20.0))
             req_stream = client.build_request("POST", upstream_url, json=body, headers=headers)
             try:
                 r = await client.send(req_stream, stream=True)
@@ -454,7 +455,8 @@ async def chat_completions(request: Request):
         else:
             stream_body = dict(body)
             stream_body["stream"] = True
-            client = httpx.AsyncClient(timeout=120.0)
+            # 核心强化: 非流式首字 20s 断流看门狗
+            client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0, read=20.0))
             try:
                 r = await client.post(upstream_url, json=stream_body, headers=headers)
                 if r.status_code != 200:
