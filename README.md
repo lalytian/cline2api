@@ -14,6 +14,11 @@
 - **协议洗包与防报错**：
   - 自动剥离 `max_tokens`、`frequency_penalty` 等可能导致 Cline 官方接口 500/400 的参数；
   - 非流式（Stream=False）请求底层自动使用 SSE 流式拼装完整响应，避免官方长请求超时或截断。
+- **🛡️ 生产级抗压与高可用加固 (Production Hardening)**：
+  - **首字 20 秒断流看门狗 (First Content Timeout Watchdog)**：针对上游偶发假死排队，建立连接限 15s，首字传输限 20s 快速熔断并自动轮换下一可用账号，彻底消灭客户端无限转圈卡死；
+  - **超长工具名双向确定性截短与回程透明还原 (Bi-directional Tool Clamping)**：针对上游 64 字符限制，入站确定性计算 `name[:55] + "_" + sha256(orig)[:8]` 避免 400，出站响应透明逆向还原回客户端原始长名，完美兼容 Codex Desktop 等重型 Agent；
+  - **WorkOS 双通道自愈**：AccessToken 到期时优先走官方 Auth，异常时自动平滑回退 WorkOS 原生刷新通道；
+  - **原生 `/v1/responses` 适配**：完整转译适配新一代 responses 路由，抹平协议代差。
 - **内置 Web 管理面板 (`/admin`)**：
   - **账号看板**：实时查看账号状态、冷却剩余时间、连续失败次数、Token 有效期；
   - **便捷授权**：支持 WorkOS 设备码（Device Code）一键发起 OAuth 登录授权；
